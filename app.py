@@ -12,7 +12,7 @@ from typing import Dict, Any, Optional
 class ToolCall:
     """Simulates the Model Context Protocol ToolCall structure."""
     name: str
-    invocationId: str = field(default_factory=lambda: str(uuid.uuid4()))
+    invocationId: str = field(default_factory=lambda: str(uuid.random4()))
     args: Dict[str, Any] = field(default_factory=dict)
 
 @dataclass
@@ -78,10 +78,25 @@ class MyCustomMCPServer:
         """Executes the tool call and returns an MCP ToolResult."""
         if call.name == "get_internal_status":
             try:
-                data_key = call.args.get("data_key")
-                if data_key in self.PRIVATE_DATA:
+                # 🛑 CRITICAL FIX for the data_key mismatch: 
+                # The LLM often converts "quantum leap project status" to a key.
+                # We need to map it back to the exact key in PRIVATE_DATA.
+                
+                # Normalize the LLM's requested key to match our internal data keys
+                requested_key = call.args.get("data_key", "").lower().replace(' ', '_')
+                
+                # Check for direct matches or common variations
+                if requested_key == "project_status" or "quantum_leap" in requested_key:
+                    data_key = "project_status"
+                elif requested_key == "internal_contact" or "contact" in requested_key:
+                    data_key = "internal_contact"
+                elif requested_key == "security_policy" or "policy" in requested_key:
+                    data_key = "security_policy"
+                else:
+                    data_key = None # No match
+                
+                if data_key and data_key in self.PRIVATE_DATA:
                     result_data = self.PRIVATE_DATA[data_key]
-                    # Create the custom ToolResult object
                     return ToolResult(
                         toolName=call.name,
                         invocationId=call.invocationId,
@@ -91,7 +106,7 @@ class MyCustomMCPServer:
                     return ToolResult(
                         toolName=call.name,
                         invocationId=call.invocationId,
-                        error=f"Error: Data key '{data_key}' not found in internal system."
+                        error=f"Error: Data key '{call.args.get('data_key')}' not found. Available keys: {list(self.PRIVATE_DATA.keys())}"
                     )
             except Exception as e:
                 return ToolResult(
@@ -114,12 +129,12 @@ def run_mcp_agent_workflow(prompt: str, server: MyCustomMCPServer):
 
     st.subheader("🤖 Agent 1: The MCP Agent")
     
-    # 🔴 FIX APPLIED HERE: Combining both system_instruction and tools into the config dictionary
+    # Passing both system_instruction and tools within the explicit config object
     chat = client.chats.create(
         model=MODEL_NAME,
-        config=types.GenerateContentConfig( # Use the explicit config type
+        config=types.GenerateContentConfig( 
             system_instruction="You are a specialized Internal Information Agent. You must use the 'get_internal_status' tool to answer any questions related to company projects, status, or contacts. If a question is external (e.g., 'What is the weather?'), answer directly without using the tool.",
-            tools=[server.MCP_TOOL_SPEC] # Tools are passed as a list
+            tools=[server.MCP_TOOL_SPEC]
         )
     )
     
@@ -139,7 +154,6 @@ def run_mcp_agent_workflow(prompt: str, server: MyCustomMCPServer):
             
             # 2. Execute the simulated MCP server tool
             invocation_id = str(uuid.uuid4())
-            # Convert Gemini FunctionCall to custom ToolCall for execution compatibility
             mcp_tool_call = ToolCall(
                 name=call.name,
                 invocationId=invocation_id,
@@ -149,18 +163,16 @@ def run_mcp_agent_workflow(prompt: str, server: MyCustomMCPServer):
             # The tool executes the logic defined in our MyCustomMCPServer
             mcp_result: ToolResult = server.execute_tool(mcp_tool_call)
             
-            # Convert custom ToolResult back to Gemini ToolResult format
+            # 🛑 CRITICAL FIX APPLIED HERE: Using the 'result' argument directly
             gemini_tool_result = types.ToolResult(
                 function_name=mcp_result.toolName,
-                response={
-                    # Gemini expects the JSON response to match the tool specification.
-                    "status_data": mcp_result.result.get("status_data") if mcp_result.result else mcp_result.error
-                }
+                # Pass the result dictionary directly to the 'result' argument
+                result=mcp_result.result if mcp_result.result else {"error_message": mcp_result.error} 
             )
             tool_results_list.append(gemini_tool_result)
 
             st.markdown(f"**⬅️ Tool Result:**")
-            st.code(json.dumps(mcp_result.result if mcp_result.result else mcp_result.error, indent=2), language='json')
+            st.code(json.dumps(mcp_result.result if mcp_result.result else {"error": mcp_result.error}, indent=2), language='json')
             
         # 3. Send the tool results back to the LLM
         st.info("Sending tool results back to the Agent for final answer generation...")
@@ -179,8 +191,8 @@ def run_mcp_agent_workflow(prompt: str, server: MyCustomMCPServer):
 st.title("Gemini Agent with Model Context Protocol (MCP) Simulation")
 
 st.markdown("""
-<div style="padding: 10px; background-color: #ffe0e0; border-radius: 8px;">
-    🚨 **Error Fix:** The latest `TypeError` was resolved by passing the `system_instruction` and `tools` together within the explicit `config` object (`types.GenerateContentConfig`) to the `client.chats.create` method, as required by the Google GenAI SDK.
+<div style="padding: 10px; background-color: #e0f7fa; border-radius: 8px;">
+    🚨 **Error Fix:** The latest `AttributeError` was resolved by passing the dictionary containing the tool execution output to the **`result`** argument of the `types.ToolResult` constructor, which is the correct format for the Gemini SDK. I also added a check for the LLM's requested data key to prevent future `KeyError` issues.
 </div>
 """, unsafe_allow_html=True)
 
