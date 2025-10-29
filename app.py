@@ -114,11 +114,13 @@ def run_mcp_agent_workflow(prompt: str, server: MyCustomMCPServer):
 
     st.subheader("🤖 Agent 1: The MCP Agent")
     
-    # 🔴 FIX APPLIED HERE: tools argument passed directly, not in a config dict
+    # 🔴 FIX APPLIED HERE: Combining both system_instruction and tools into the config dictionary
     chat = client.chats.create(
         model=MODEL_NAME,
-        system_instruction="You are a specialized Internal Information Agent. You must use the 'get_internal_status' tool to answer any questions related to company projects, status, or contacts. If a question is external (e.g., 'What is the weather?'), answer directly without using the tool.",
-        tools=[server.MCP_TOOL_SPEC] # ⬅️ Correct way to pass tools to client.chats.create
+        config=types.GenerateContentConfig( # Use the explicit config type
+            system_instruction="You are a specialized Internal Information Agent. You must use the 'get_internal_status' tool to answer any questions related to company projects, status, or contacts. If a question is external (e.g., 'What is the weather?'), answer directly without using the tool.",
+            tools=[server.MCP_TOOL_SPEC] # Tools are passed as a list
+        )
     )
     
     current_prompt = prompt
@@ -178,7 +180,7 @@ st.title("Gemini Agent with Model Context Protocol (MCP) Simulation")
 
 st.markdown("""
 <div style="padding: 10px; background-color: #ffe0e0; border-radius: 8px;">
-    🚨 **Error Fix:** The `TypeError` was resolved by correcting how the tool specification is passed to the Gemini SDK's `client.chats.create` method. The `tools` argument is now passed directly, as required by the SDK.
+    🚨 **Error Fix:** The latest `TypeError` was resolved by passing the `system_instruction` and `tools` together within the explicit `config` object (`types.GenerateContentConfig`) to the `client.chats.create` method, as required by the Google GenAI SDK.
 </div>
 """, unsafe_allow_html=True)
 
