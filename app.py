@@ -7,12 +7,12 @@ from google.genai import types
 from dataclasses import dataclass, field
 from typing import Dict, Any, Optional
 
-# --- Custom MCP Primitives (Replaces 'modelcontextprotocol' dependency) ---
+# --- Custom MCP Primitives (No changes needed here) ---
 @dataclass
 class ToolCall:
     """Simulates the Model Context Protocol ToolCall structure."""
     name: str
-    invocationId: str = field(default_factory=lambda: str(uuid.random4()))
+    invocationId: str = field(default_factory=lambda: str(uuid.uuid4()))
     args: Dict[str, Any] = field(default_factory=dict)
 
 @dataclass
@@ -78,10 +78,6 @@ class MyCustomMCPServer:
         """Executes the tool call and returns an MCP ToolResult."""
         if call.name == "get_internal_status":
             try:
-                # 🛑 CRITICAL FIX for the data_key mismatch: 
-                # The LLM often converts "quantum leap project status" to a key.
-                # We need to map it back to the exact key in PRIVATE_DATA.
-                
                 # Normalize the LLM's requested key to match our internal data keys
                 requested_key = call.args.get("data_key", "").lower().replace(' ', '_')
                 
@@ -163,22 +159,28 @@ def run_mcp_agent_workflow(prompt: str, server: MyCustomMCPServer):
             # The tool executes the logic defined in our MyCustomMCPServer
             mcp_result: ToolResult = server.execute_tool(mcp_tool_call)
             
-            # 🛑 CRITICAL FIX APPLIED HERE: Using the 'result' argument directly
-            gemini_tool_result = types.ToolResult(
-                function_name=mcp_result.toolName,
-                # Pass the result dictionary directly to the 'result' argument
-                result=mcp_result.result if mcp_result.result else {"error_message": mcp_result.error} 
-            )
+            # 🛑 CRITICAL FIX APPLIED HERE: Creating the required dictionary format for chat.send_message
+            if mcp_result.result:
+                result_content = mcp_result.result
+            else:
+                result_content = {"error_message": mcp_result.error}
+            
+            # This is the expected format for tool results in the chat API:
+            gemini_tool_result = {
+                "function_name": mcp_result.toolName,
+                "response": result_content # The content of the result
+            }
+            
             tool_results_list.append(gemini_tool_result)
 
             st.markdown(f"**⬅️ Tool Result:**")
-            st.code(json.dumps(mcp_result.result if mcp_result.result else {"error": mcp_result.error}, indent=2), language='json')
+            st.code(json.dumps(result_content, indent=2), language='json')
             
         # 3. Send the tool results back to the LLM
         st.info("Sending tool results back to the Agent for final answer generation...")
         response = chat.send_message(
             current_prompt, # Send original prompt back to chat to retain context
-            tool_results=tool_results_list
+            tool_results=tool_results_list # Pass the list of correctly formatted dictionaries
         )
     
     # 4. Final response
@@ -191,8 +193,8 @@ def run_mcp_agent_workflow(prompt: str, server: MyCustomMCPServer):
 st.title("Gemini Agent with Model Context Protocol (MCP) Simulation")
 
 st.markdown("""
-<div style="padding: 10px; background-color: #e0f7fa; border-radius: 8px;">
-    🚨 **Error Fix:** The latest `AttributeError` was resolved by passing the dictionary containing the tool execution output to the **`result`** argument of the `types.ToolResult` constructor, which is the correct format for the Gemini SDK. I also added a check for the LLM's requested data key to prevent future `KeyError` issues.
+<div style="padding: 10px; background-color: #d1e7dd; border-radius: 8px;">
+    🎉 **Final Error Fix:** The previous `AttributeError` was resolved by correcting the format of the tool results passed to `chat.send_message`. Instead of using the dedicated `types.ToolResult` object (which is often for non-chat flows), we now pass a list of standard dictionaries formatted exactly as the chat API expects for function call responses. This should allow the agent workflow to complete successfully!
 </div>
 """, unsafe_allow_html=True)
 
