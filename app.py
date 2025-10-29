@@ -27,7 +27,7 @@ class ToolResult:
 # --- 1. Configuration and Setup ---
 # Set API Key from environment or Streamlit secrets
 API_KEY = os.environ.get("GEMINI_API_KEY", st.secrets.get("GEMINI_API_KEY", ""))
-MODEL_NAME = "gemini-2.5-flash-preview-09-2025" # Use a stable tool-use model
+MODEL_NAME = "gemini-2.5-flash-preview-09-2025" 
 
 st.set_page_config(layout="wide", page_title="Gemini Agent with Simulated MCP Tool")
 
@@ -173,11 +173,12 @@ def run_mcp_agent_workflow(prompt: str, server: MyCustomMCPServer):
     # 3. SECOND TURN: Send the *entire conversation* plus tool results for the final answer
     st.info("Sending full history and tool results back to the Agent for final answer generation...")
 
-    # 🛑 CRITICAL FIX: Correcting the list structure and commas for the contents_for_second_turn list.
+    # 🛑 CRITICAL FIX APPLIED: Replaced types.Part.from_text(prompt) with the direct Part constructor.
     contents_for_second_turn = [
-        types.Content(role="user", parts=[types.Part.from_text(prompt)]), # Line 1: User content
-        first_response.candidates[0].content,                            # Line 2: Model's function call (Content object)
-        types.Content(role="tool", parts=tool_parts_list)                # Line 3: Tool's result
+        # FIX: Replaced helper method with direct constructor to avoid TypeError
+        types.Content(role="user", parts=[types.Part(text=prompt)]), 
+        first_response.candidates[0].content,                            
+        types.Content(role="tool", parts=tool_parts_list)                
     ]
     
     final_response = client.models.generate_content(
@@ -200,7 +201,7 @@ st.title("Gemini Agent with Model Context Protocol (MCP) Simulation")
 
 st.markdown("""
 <div style="padding: 10px; background-color: #f0fff0; border-radius: 8px; border: 1px solid green;">
-    ✅ **Syntax Fix:** The final `TypeError` was due to a **missing comma and improper list structure** on the line defining the `contents_for_second_turn`. The list syntax has been corrected, which is the last known point of failure in the complex, multi-turn tool-use logic.
+    ✅ **Critical Fix:** The final `TypeError` was caused by the helper method `types.Part.from_text()`. This has been replaced with the direct, lower-level constructor **`types.Part(text=prompt)`**, which is the most reliable way to pass text content in this SDK version. This should complete the workflow successfully.
 </div>
 """, unsafe_allow_html=True)
 
