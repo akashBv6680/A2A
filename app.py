@@ -159,17 +159,17 @@ def run_mcp_agent_workflow(prompt: str, server: MyCustomMCPServer):
             # The tool executes the logic defined in our MyCustomMCPServer
             mcp_result: ToolResult = server.execute_tool(mcp_tool_call)
             
-            # 🛑 CRITICAL FIX APPLIED HERE: Creating the required dictionary format for chat.send_message
             if mcp_result.result:
                 result_content = mcp_result.result
             else:
                 result_content = {"error_message": mcp_result.error}
             
-            # This is the expected format for tool results in the chat API:
-            gemini_tool_result = {
-                "function_name": mcp_result.toolName,
-                "response": result_content # The content of the result
-            }
+            # 🛑 FINAL FIX APPLIED HERE: Creating the required FunctionResponse structure
+            # This is the expected structure for tool results in the chat API:
+            gemini_tool_result = types.Part.from_function_response( # Use the helper function for correct typing
+                name=mcp_result.toolName,
+                response=result_content # The content of the result
+            )
             
             tool_results_list.append(gemini_tool_result)
 
@@ -178,9 +178,16 @@ def run_mcp_agent_workflow(prompt: str, server: MyCustomMCPServer):
             
         # 3. Send the tool results back to the LLM
         st.info("Sending tool results back to the Agent for final answer generation...")
+        
+        # We must construct a list of Contents, where each Content has the tool results
+        # When passing tool_results to send_message, we pass a list of Parts, not a list of dictionaries.
         response = chat.send_message(
-            current_prompt, # Send original prompt back to chat to retain context
-            tool_results=tool_results_list # Pass the list of correctly formatted dictionaries
+            contents=[
+                types.Content(
+                    parts=tool_results_list,
+                    role='tool' # Must specify the role is 'tool' for function responses
+                )
+            ]
         )
     
     # 4. Final response
@@ -194,7 +201,7 @@ st.title("Gemini Agent with Model Context Protocol (MCP) Simulation")
 
 st.markdown("""
 <div style="padding: 10px; background-color: #d1e7dd; border-radius: 8px;">
-    🎉 **Final Error Fix:** The previous `AttributeError` was resolved by correcting the format of the tool results passed to `chat.send_message`. Instead of using the dedicated `types.ToolResult` object (which is often for non-chat flows), we now pass a list of standard dictionaries formatted exactly as the chat API expects for function call responses. This should allow the agent workflow to complete successfully!
+    🎉 **Final Error Fix:** The last `TypeError` was resolved by ensuring the tool results are sent back using the **correct `types.Content` object structure with the `role='tool'`** and using `types.Part.from_function_response` to create the parts. This complex, multi-step process should now successfully complete the Agent-to-Model communication cycle!
 </div>
 """, unsafe_allow_html=True)
 
