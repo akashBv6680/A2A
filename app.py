@@ -1,10 +1,28 @@
 import streamlit as st
 import os
-from google import genai
-from google.genai import types
-from modelcontextprotocol import Specification, ToolCall, ToolResult
 import json
 import uuid
+from google import genai
+from google.genai import types
+from dataclasses import dataclass, field
+from typing import Dict, Any, Optional
+
+# --- Custom MCP Primitives (Replaces 'modelcontextprotocol' dependency) ---
+@dataclass
+class ToolCall:
+    """Simulates the Model Context Protocol ToolCall structure."""
+    name: str
+    invocationId: str = field(default_factory=lambda: str(uuid.uuid4()))
+    args: Dict[str, Any] = field(default_factory=dict)
+
+@dataclass
+class ToolResult:
+    """Simulates the Model Context Protocol ToolResult structure."""
+    toolName: str
+    invocationId: str
+    result: Optional[Dict[str, Any]] = None
+    error: Optional[str] = None
+
 
 # --- 1. Configuration and Setup ---
 # Set API Key from environment or Streamlit secrets
@@ -26,8 +44,7 @@ else:
 class MyCustomMCPServer:
     """
     A class that simulates an MCP server providing tools and data.
-    In a real deployment, this logic would run on a separate server 
-    and communicate via HTTP/stdio, but here it's an in-app function.
+    This acts as the agent's gateway to 'external' data.
     """
     # This is the data the agent is designed to access
     PRIVATE_DATA = {
@@ -63,7 +80,7 @@ class MyCustomMCPServer:
                 data_key = call.args.get("data_key")
                 if data_key in self.PRIVATE_DATA:
                     result_data = self.PRIVATE_DATA[data_key]
-                    # The ToolResult object is part of the 'modelcontextprotocol' SDK
+                    # Create the custom ToolResult object
                     return ToolResult(
                         toolName=call.name,
                         invocationId=call.invocationId,
@@ -113,13 +130,13 @@ def run_mcp_agent_workflow(prompt: str, server: MyCustomMCPServer):
         # 1. LLM requested a tool call
         st.markdown("**➡️ Tool Call Detected:**")
         
-        tool_results = []
+        tool_results_list = []
         for call in response.function_calls:
             st.code(f"Tool: {call.name} | Args: {dict(call.args)}", language="json")
             
             # 2. Execute the simulated MCP server tool
             invocation_id = str(uuid.uuid4())
-            # Convert Gemini FunctionCall to MCP ToolCall for execution compatibility
+            # Convert Gemini FunctionCall to custom ToolCall for execution compatibility
             mcp_tool_call = ToolCall(
                 name=call.name,
                 invocationId=invocation_id,
@@ -129,14 +146,15 @@ def run_mcp_agent_workflow(prompt: str, server: MyCustomMCPServer):
             # The tool executes the logic defined in our MyCustomMCPServer
             mcp_result: ToolResult = server.execute_tool(mcp_tool_call)
             
-            # Convert MCP ToolResult back to Gemini ToolResult format
+            # Convert custom ToolResult back to Gemini ToolResult format
             gemini_tool_result = types.ToolResult(
                 function_name=mcp_result.toolName,
                 response={
+                    # Gemini expects the JSON response to match the tool specification.
                     "status_data": mcp_result.result.get("status_data") if mcp_result.result else mcp_result.error
                 }
             )
-            tool_results.append(gemini_tool_result)
+            tool_results_list.append(gemini_tool_result)
 
             st.markdown(f"**⬅️ Tool Result:**")
             st.code(json.dumps(mcp_result.result if mcp_result.result else mcp_result.error, indent=2), language='json')
@@ -145,7 +163,7 @@ def run_mcp_agent_workflow(prompt: str, server: MyCustomMCPServer):
         st.info("Sending tool results back to the Agent for final answer generation...")
         response = chat.send_message(
             current_prompt, # Send original prompt back to chat to retain context
-            tool_results=tool_results
+            tool_results=tool_results_list
         )
     
     # 4. Final response
@@ -159,7 +177,7 @@ st.title("Gemini Agent with Model Context Protocol (MCP) Simulation")
 
 st.markdown("""
 <div style="padding: 10px; background-color: #f0f8ff; border-radius: 8px;">
-    🔑 **Protocol Note:** This application demonstrates the **logic** of the Model Context Protocol (MCP) by defining a custom data access tool and manually chaining the LLM's tool-call with the tool's execution (the core of MCP functionality). This allows the cloud-deployed LLM to access **simulated external data**.
+    🔑 **Deployment Fix:** The external 'modelcontextprotocol' library was removed because it is not available on PyPI, causing the deployment error. The core functionality (`ToolCall` and `ToolResult`) is now **manually defined** in this file, ensuring successful deployment to Streamlit Cloud while keeping the intended **MCP logic** intact.
 </div>
 """, unsafe_allow_html=True)
 
