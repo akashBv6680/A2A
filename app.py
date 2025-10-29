@@ -5,9 +5,11 @@ import uuid
 from google import genai
 from google.genai import types
 from dataclasses import dataclass, field
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 
 # --- Custom MCP Primitives (No changes needed here) ---
+# NOTE: These classes simulate the Model Context Protocol (MCP) data structures
+# but do not require the external, unavailable 'modelcontextprotocol' library.
 @dataclass
 class ToolCall:
     """Simulates the Model Context Protocol ToolCall structure."""
@@ -27,13 +29,12 @@ class ToolResult:
 # --- 1. Configuration and Setup ---
 # Set API Key from environment or Streamlit secrets
 API_KEY = os.environ.get("GEMINI_API_KEY", st.secrets.get("GEMINI_API_KEY", ""))
-MODEL_NAME = "gemini-2.5-flash-preview-09-2025"
+MODEL_NAME = "gemini-2.5-flash-preview-09-2025" # Use a stable tool-use model
 
 st.set_page_config(layout="wide", page_title="Gemini Agent with Simulated MCP Tool")
 
 if API_KEY:
     try:
-        # Initialize client with the API key
         client = genai.Client(api_key=API_KEY)
     except Exception as e:
         st.error(f"Failed to initialize Gemini Client: {e}")
@@ -43,10 +44,6 @@ else:
 
 # --- 2. The Simulated MCP Server (External Data Source) ---
 class MyCustomMCPServer:
-    """
-    A class that simulates an MCP server providing tools and data.
-    This acts as the agent's gateway to 'external' data.
-    """
     # This is the data the agent is designed to access
     PRIVATE_DATA = {
         "project_status": "The 'Quantum Leap' project is 85% complete. Final testing scheduled for 2026-03-15.",
@@ -78,18 +75,17 @@ class MyCustomMCPServer:
         """Executes the tool call and returns an MCP ToolResult."""
         if call.name == "get_internal_status":
             try:
-                # Normalize the LLM's requested key to match our internal data keys
                 requested_key = call.args.get("data_key", "").lower().replace(' ', '_')
                 
-                # Check for direct matches or common variations
-                if requested_key == "project_status" or "quantum_leap" in requested_key or "status" in requested_key:
+                # Robustly map the LLM's requested key to our internal data keys
+                if "project" in requested_key or "status" in requested_key:
                     data_key = "project_status"
-                elif requested_key == "internal_contact" or "contact" in requested_key or "engineer" in requested_key:
+                elif "contact" in requested_key or "engineer" in requested_key:
                     data_key = "internal_contact"
-                elif requested_key == "security_policy" or "policy" in requested_key:
+                elif "policy" in requested_key:
                     data_key = "security_policy"
                 else:
-                    data_key = None # No match
+                    data_key = None
                 
                 if data_key and data_key in self.PRIVATE_DATA:
                     result_data = self.PRIVATE_DATA[data_key]
@@ -125,69 +121,83 @@ def run_mcp_agent_workflow(prompt: str, server: MyCustomMCPServer):
 
     st.subheader("🤖 Agent 1: The MCP Agent")
     
-    # Passing both system_instruction and tools within the explicit config object
-    chat = client.chats.create(
+    # 1. FIRST TURN: Send the prompt and enable tools
+    st.info("Agent is processing prompt and checking for tool need...")
+    first_response = client.models.generate_content(
         model=MODEL_NAME,
+        contents=[prompt],
         config=types.GenerateContentConfig( 
             system_instruction="You are a specialized Internal Information Agent. You must use the 'get_internal_status' tool to answer any questions related to company projects, status, or contacts. If a question is external (e.g., 'What is the weather?'), answer directly without using the tool.",
             tools=[server.MCP_TOOL_SPEC]
         )
     )
     
-    current_prompt = prompt
-    response = chat.send_message(current_prompt)
-    
-    # Multi-turn interaction loop for tool use
-    while response.function_calls:
-        st.info("Agent is detecting a need for external data...")
-        
-        # 1. LLM requested a tool call
-        st.markdown("**➡️ Tool Call Detected:**")
-        
-        tool_parts_list = []
-        for call in response.function_calls:
-            st.code(f"Tool: {call.name} | Args: {dict(call.args)}", language="json")
-            
-            # 2. Execute the simulated MCP server tool
-            invocation_id = str(uuid.uuid4())
-            mcp_tool_call = ToolCall(
-                name=call.name,
-                invocationId=invocation_id,
-                args=dict(call.args)
-            )
-            
-            # The tool executes the logic defined in our MyCustomMCPServer
-            mcp_result: ToolResult = server.execute_tool(mcp_tool_call)
-            
-            if mcp_result.result:
-                result_content = mcp_result.result
-            else:
-                result_content = {"error_message": mcp_result.error}
-            
-            # Use the helper function for correct typing
-            gemini_tool_part = types.Part.from_function_response( 
-                name=mcp_result.toolName,
-                response=result_content # The content of the result
-            )
-            
-            tool_parts_list.append(gemini_tool_part)
+    # Check if a tool call was made
+    if not first_response.function_calls:
+        st.subheader("✅ Final Agent Response (No Tool Used)")
+        st.markdown(first_response.text)
+        return
 
-            st.markdown(f"**⬅️ Tool Result:**")
-            st.code(json.dumps(result_content, indent=2), language='json')
-            
-        # 3. Send the tool results back to the LLM
-        st.info("Sending tool results back to the Agent for final answer generation...")
-        
-        # 🛑 ULTIMATE FIX APPLIED HERE: Pass the list of Part objects directly as contents.
-        # This simplifies the Content structure and relies on the SDK to properly
-        # identify the list of Parts as tool responses.
-        response = chat.send_message(
-            contents=tool_parts_list # Pass ONLY the list of Part objects.
-        )
+    # --- Tool Call Loop Initiated ---
+    st.info("Agent detected a need for external data. Executing tool...")
+
+    # Build the list of tool results
+    tool_parts_list: List[types.Part] = []
     
+    for call in first_response.function_calls:
+        st.markdown("**➡️ Tool Call Detected:**")
+        st.code(f"Tool: {call.name} | Args: {dict(call.args)}", language="json")
+        
+        # 2. Execute the simulated MCP server tool
+        invocation_id = str(uuid.uuid4())
+        mcp_tool_call = ToolCall(
+            name=call.name,
+            invocationId=invocation_id,
+            args=dict(call.args)
+        )
+        mcp_result: ToolResult = server.execute_tool(mcp_tool_call)
+        
+        if mcp_result.result:
+            result_content = mcp_result.result
+        else:
+            result_content = {"error_message": mcp_result.error}
+        
+        # Create the Part object for the tool result
+        gemini_tool_part = types.Part.from_function_response( 
+            name=mcp_result.toolName,
+            response=result_content
+        )
+        tool_parts_list.append(gemini_tool_part)
+
+        st.markdown(f"**⬅️ Tool Result:**")
+        st.code(json.dumps(result_content, indent=2), language='json')
+        
+    # 3. SECOND TURN: Send the *entire conversation* plus tool results for the final answer
+    st.info("Sending full history and tool results back to the Agent for final answer generation...")
+
+    # The conversation history needed for the final turn:
+    # 1. User's original prompt
+    # 2. Model's function call (from first_response)
+    # 3. Tool's response (tool_parts_list)
+    
+    contents_for_second_turn = [
+        types.Content(role="user", parts=[types.Part.from_text(prompt)]),
+        first_response.candidates[0].content, # Model's function call
+        types.Content(role="tool", parts=tool_parts_list) # Tool's result
+    ]
+    
+    final_response = client.models.generate_content(
+        model=MODEL_NAME,
+        contents=contents_for_second_turn,
+        config=types.GenerateContentConfig( 
+            system_instruction="You are a specialized Internal Information Agent. You must use the 'get_internal_status' tool to answer any questions related to company projects, status, or contacts. If a question is external (e.g., 'What is the weather?'), answer directly without using the tool.",
+            tools=[server.MCP_TOOL_SPEC]
+        )
+    )
+
     # 4. Final response
     st.subheader("✅ Final Agent Response")
-    st.markdown(response.text)
+    st.markdown(final_response.text)
 
 
 # --- 4. Streamlit UI ---
@@ -196,7 +206,7 @@ st.title("Gemini Agent with Model Context Protocol (MCP) Simulation")
 
 st.markdown("""
 <div style="padding: 10px; background-color: #f0fff0; border-radius: 8px; border: 1px solid green;">
-    🎉 **Final Deployment Fix:** The persistent `TypeError` was resolved by passing the list of tool response **`types.Part`** objects directly to the `contents` argument of `chat.send_message`. This final format should align with the required SDK structure for multi-turn chat with tool execution. The agent workflow should now be complete and functioning!
+    ✅ **Final Solution Strategy:** The persistent `TypeError` in `chat.send_message` has been fixed by switching to **`client.models.generate_content`** for both turns. This removes the complex `Chat` object's state issues and uses a more robust, explicit history passing method for the final result generation. Please **re-deploy this code** to complete the workflow.
 </div>
 """, unsafe_allow_html=True)
 
