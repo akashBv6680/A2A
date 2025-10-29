@@ -33,6 +33,7 @@ st.set_page_config(layout="wide", page_title="Gemini Agent with Simulated MCP To
 
 if API_KEY:
     try:
+        # Initialize client with the API key
         client = genai.Client(api_key=API_KEY)
     except Exception as e:
         st.error(f"Failed to initialize Gemini Client: {e}")
@@ -113,11 +114,11 @@ def run_mcp_agent_workflow(prompt: str, server: MyCustomMCPServer):
 
     st.subheader("🤖 Agent 1: The MCP Agent")
     
-    # Start chat with the tool enabled
+    # 🔴 FIX APPLIED HERE: tools argument passed directly, not in a config dict
     chat = client.chats.create(
         model=MODEL_NAME,
         system_instruction="You are a specialized Internal Information Agent. You must use the 'get_internal_status' tool to answer any questions related to company projects, status, or contacts. If a question is external (e.g., 'What is the weather?'), answer directly without using the tool.",
-        config={"tools": [server.MCP_TOOL_SPEC]}
+        tools=[server.MCP_TOOL_SPEC] # ⬅️ Correct way to pass tools to client.chats.create
     )
     
     current_prompt = prompt
@@ -176,8 +177,8 @@ def run_mcp_agent_workflow(prompt: str, server: MyCustomMCPServer):
 st.title("Gemini Agent with Model Context Protocol (MCP) Simulation")
 
 st.markdown("""
-<div style="padding: 10px; background-color: #f0f8ff; border-radius: 8px;">
-    🔑 **Deployment Fix:** The external 'modelcontextprotocol' library was removed because it is not available on PyPI, causing the deployment error. The core functionality (`ToolCall` and `ToolResult`) is now **manually defined** in this file, ensuring successful deployment to Streamlit Cloud while keeping the intended **MCP logic** intact.
+<div style="padding: 10px; background-color: #ffe0e0; border-radius: 8px;">
+    🚨 **Error Fix:** The `TypeError` was resolved by correcting how the tool specification is passed to the Gemini SDK's `client.chats.create` method. The `tools` argument is now passed directly, as required by the SDK.
 </div>
 """, unsafe_allow_html=True)
 
